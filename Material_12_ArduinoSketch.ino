@@ -9,38 +9,15 @@ Internet-Wetter-Lampe v1.0.6 - letzte Aenderung am 30. August 2019 - entwickelt 
 
 */
 
-/* 
-Hier: Mit Anpassungen für die Verwendung von sehr preiswerten 0.96"-OLED Displays (128*64) [I2C SSD1306 12864 LCD Screen Board]. 
-      Mit Adafruit_SSD1306.h werden diese nicht erkannt, stattdessen kann SSD1306.h von ThingPulse, Fabrice Weinberg verwendet werden.
-      Dazu ist "ESP8266 and ESP32 OLED driver for SSD1306 displays" in der Arduino IDE über den Boardverwalter zu installieren. (jd)     
-*/      
 
 #include "FastLED.h"                      // Bibliothek einbinden, um LED ansteuern zu koennen
-CRGB leds[1];                              // Instanziieren der LED
-#define LED_DATA_PIN D4                    // an welchem Pin liegt die LED an?
 
 #include <SPI.h>                          // Bibliotheken einbinden, um das OLED Display ansteuern zu koennen
 #include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-#include <SSD1306.h>
-#define OLED_RESET 0                       // "0" fuer ESP8266
-#define SCREEN_WIDTH 128                   // OLED display width, in pixels
-#define SCREEN_HEIGHT 64                   // OLED display height, in pixels
-SSD1306 display(0x3C,D2,D5);               // D2 für SCK, D5 für SDA 
-
-#include <RestClient.h>                   // Bibliothek einbinden, um Get-Requests senden zu koennen
-RestClient client = RestClient("api.openweathermap.org");  // RestClient der Openweathermap-API (Hinweis: Port mit Komma uebergeben)
-/* Achtung: In RestClient.cpp gibt es in RestClient::request ein delay, das bei schnellen Internetverbindungen zu Problemen führt:
- *     //make sure you write all those bytes.#
- *     delay(100);
- * Bei schnellen Verbindugen kann es sein, dass die Verbindung serverseitig nach diesen 0,1 Sekunden bereits geschlossen ist.
- * Ggf. ist die delay-Zeile daher auszukommentieren!
- * Alternativ sollte eine Änderung in RestClient::readResponse helfen:
- * statt  while (client.connected())  kann dort auch   while (client.available()) verwendet werden.
- * (jd)
- */
-
-
+#include "RestClient.h"                   // Bibliothek einbinden, um Get-Requests senden zu koennen
 #include <ArduinoJson.h>                  // Bibliothek einbinden, um JSONs parsen zu koennen
 
 #include <math.h>                         // Bibliothek einbinden, um Temperaturen runden zu koennen
@@ -48,11 +25,23 @@ RestClient client = RestClient("api.openweathermap.org");  // RestClient der Ope
 #include <WiFiManager.h>                  // Bibliothek einbinden, um Uebergabe der WiFi Credentials ueber einen AP zu ermoeglichen
 WiFiManager wifiManager;
 
+RestClient client = RestClient("api.openweathermap.org");                         // RestClient der Openweathermap-API (Hinweis: Port mit Komma uebergeben)
+
+#define OLED_RESET 0                       // "0" fuer ESP8266
+#define SCREEN_WIDTH 128                   // OLED display width, in pixels
+#define SCREEN_HEIGHT 64                   // OLED display height, in pixels
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+#define LED_DATA_PIN D4                    // an welchem Pin liegt die LED an?
+
+CRGB leds[1];                              // Instanziieren der LED
+
+
 
 
 // ========================  hier deinen API-Key eintragen!!!  ============================================================================================================
 
-const String api_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";    // dein Open-Weather-Map-API-Schluessel, kostenlos beziehbar ueber https://openweathermap.org/
+const String api_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";    // dein Open-Weather-Map-API-Schluessel, kostenlos beziehbar ueber https://openweathermap.org/
 
 // ========================================================================================================================================================================
 
@@ -70,53 +59,63 @@ unsigned long lastcheck = 0;                               // Zeitpunkt des letz
 
 
 void setup() {
-  Serial.begin(115200);                               // fuer die Ausgabe des seriellen Monitors, Geschwindigkeit ggf. anpassen!
+  Serial.begin(115200);                               // fuer die Ausgabe des seriellen Monitors
 
-  display.init();                                     // das Display initialisieren, 
-  display.flipScreenVertically();                     // den Bildschirm vertikal spiegeln (sodass die vier Kontakte oberhalb des Displays sind)
-  display.clear();                                    // ... den Inhalt löschen ...
-  display.drawString(0, 16, "Verbinde dich mit");
-  display.drawString(0, 28, "dem WLAN SmarteLampe");
-  display.drawString(0, 40, "und öffne im Browser");
-  display.drawString(0, 52, "192.168.4.1");
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);        // das Display initialisieren, ...
+  display.clearDisplay();                           // ... den Inhalt löschen ...
+  display.setTextColor(WHITE);                      // ... und "Verbindungsversuch" anzeigen
+  display.setTextSize(1);
+  display.startscrollleft(0x00, 0x0F);
+  display.setCursor(0, 16);                         // Aufgrund der kleineren Displaygröße hier ein Offset von 16Pixeln        
+  display.println("Verbinde dich mit");
+  display.setCursor(0, 28);                        // 7 Pixel Buchstabenhöhe + 5 Pixel Abstand
+  display.println("deineSmarteLampe");
+  display.setCursor(0, 40);
+  display.println("und \224ffne");
+  display.setCursor(0, 52);
+  display.println("192.168.4.1");
   display.display();                                // ... und die Änderungen anzeigen
 
   FastLED.addLeds<NEOPIXEL, LED_DATA_PIN>(leds, 1); // LED instanziieren
   FastLED.show();
 
-  leds[0] = CRGB::Green;                       // LED zu Beginn grün setzen, um sie zu testen
-  FastLED.setBrightness(64);
+  leds[0] = CRGB::Red;                              // LED zu Beginn rot setzen, um sie zu testen
+  FastLED.setBrightness(255);
   FastLED.show();
-  // wifiManager.resetSettings();              // ggf. zum Löschen bisher im ESP8266 gespeicherter AccessPoint-Zugangsdaten
-  wifiManager.autoConnect("SmarteLampe");      // hier kann der Name des Hotspots deiner Lampe angepasst werden
+  wifiManager.autoConnect("deineSmarteLampe");      // hier kann der Name des Hotspots deiner Lampe angepasst werden
 
-  getCurrentWeatherConditions();               // nach dem (Neu-)Start erstmalig das aktuelle Wetter laden
+  getCurrentWeatherConditions();                    // nach dem (Neu-)Start erstmalig das aktuelle Wetter laden
   updateDisplay();
 }
 
 
+
+
+
+
 void loop() {
-  // Die folgende Verzweigung sorgt dafuer, dass nur alle 5 Minuten (also 300.000 ms) das aktuelle Wetter abgefragt wird; dies spart Web-Traffic 
-  // Openweathermap erlaubt pro freiem Account max. 60 Abfragen pro Minute (1 Mio/Monat) - Stand Juli 2020.
-  if (millis() - lastcheck >= 300000) {            // millis() gibt die Zeit aus, die seit dem Start des Mikrocontrollers verstrichen ist
+  // folgende if-Bedingung sorgt dafuer, dass nur alle 30 Minuten (also 1.800.000 ms) das aktuelle Wetter abgefragt wird; dies spart Strom und Web-Traffic
+  if (millis() - lastcheck >= 1800000) {            // millis() gibt die Zeit aus, die seit dem Start des Mikrocontrollers verstrichen ist
     getCurrentWeatherConditions();
     lastcheck = millis();                           // lastcheck auf aktuelle Systemzeit setzen
     updateDisplay();
   }
 
   // unten werden nun je nach Wetterbedingung (die in der Variablen "weatherID_shortened" steckt) eine Funktion aufgerufen, die die Lampe unterschiedlich leuchten laesst
-  if (weatherID == 800) LED_effect_clearSky();     // nur wenn die "weatherID" 800 ist, ist es klar/heiter/sonnig...
+  if (weatherID == 800) LED_effect_clearSky();                  // nur wenn die "weatherID" 800 ist, ist es klar/heiter/sonnig...
   else {
-    switch (weatherID_shortened) {                 // sonst ist es je nach Hunderterbereich unterschiedlich: Werte hierfuer entstammen aus https://openweathermap.org/weather-conditions
-      case 2: LED_effect_thunder(); break;         // "Gewitter"
-      case 3: LED_effect_drizzle(); break;         // "Nieselregen"
-      case 5: LED_effect_rain(); break;            // "Regen"
-      case 6: LED_effect_snow(); break;            // "Schnee"
-      case 7: LED_effect_fog(); break;             // "Nebel"
-      case 8: LED_effect_cloudy(); break;          // "Wolken"
+    switch (weatherID_shortened) {                              // sonst ist es je nach Hunderterbereich unterschiedlich: Werte hierfuer entstammen aus https://openweathermap.org/weather-conditions
+      case 2: LED_effect_thunder(); break;    // "Gewitter"
+      case 3: LED_effect_drizzle(); break;    // "Nieselregen"
+      case 5: LED_effect_rain(); break;       // "Regen"
+      case 6: LED_effect_snow(); break;       // "Schnee"
+      case 7: LED_effect_fog(); break;        // "Nebel"
+      case 8: LED_effect_cloudy(); break;     // "Wolken"
     }
   }
+
   // und die loop-Schleife beginnt nun wieder von vorne ... :)
+
 }
 
 
@@ -126,10 +125,14 @@ void loop() {
 
 
 void updateDisplay() {                                                                    // Funktion zum Aktualisieren des Inhalts auf dem Display
-  display.clear();
-  
+  display.clearDisplay();
+  display.stopscroll();
+
   // obere Zeile
-  display.drawString(32,16,weatherforecast_shortened);
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(32, 16);                 // bei TextSize(1) funktioniert setCursor(32, 9) ganz gut
+  display.println(weatherforecast_shortened);
 
   Serial.println(weatherforecast_shortened);
   Serial.println(weatherforecast_shortened.length());
@@ -140,17 +143,28 @@ void updateDisplay() {                                                          
     Serial.println(temperature_Celsius_Int);
     Serial.println(String(temperature_Celsius_Int,DEC));
     int digitsTemperature = String(temperature_Celsius_Int,DEC).length();  // wie lang (wie viele Ziffern) ist die Anzeige der Temperatur?
-    display.drawString(77 - 12 * digitsTemperature, 50,String(temperature_Celsius_Int,DEC));
+    display.setCursor(77 - 12 * digitsTemperature, 50);                   // bei textsize(2) ist eine Ziffer 12 Pixel breit; rechtsbuendig anzeigen, deswegen wird die x-Koord. des Cursors abhaengig davon gesetzt
+    display.setTextSize(2);
+    display.println(temperature_Celsius_Int);
     
 
     // Grad Celsius: C
-    display.drawString(86,50,"C");
+    display.setCursor(86, 50);
+    display.setTextSize(2);
+    display.println("C");
 
     // Grad Celsius: Kreis
-    display.drawCircle(80, 52, 2);
+    display.drawCircle(80, 52, 2, WHITE);
   } else {
-    display.drawString(32,16,"Keine");
-    display.drawString(32,28,"Serverantwort!");
+    display.stopscroll();
+    display.setTextColor(WHITE);
+    display.setTextSize(1);
+    display.setCursor(32, 16);
+    display.println("keine");
+    display.setCursor(32, 28);
+    display.println("Server-");
+    display.setCursor(32, 40);
+    display.println("antwort...");
   }
   display.display();
 }
@@ -158,12 +172,13 @@ void updateDisplay() {                                                          
 
 void getCurrentWeatherConditions() {                                                      // Funktion zum Abrufen der Wetterdaten von der Openweathermap-API
   
-  String address = "/data/2.5/weather?id=2866647&appid=" + api_key;  // id hier für Neheim, DE. Syntax siehe https://openweathermap.org/current
+  String address = "/data/2.5/weather?q=Oldenburg,DE&APPID=" + api_key;
   char address2[100];
   address.toCharArray(address2, 100);
   Serial.println(address2);
   String response = "";
   int statusCode = client.get(address2, &response);                                       // Wetter von heute über die openweathermap-API
+  // int statusCode = client.get("/weather?ort=Oldenburg&wann=heute", &response);         // Wetter von heute über den Server der Uni Oldenburg
   Serial.print("Status code from server: "); Serial.println(statusCode);
   Serial.print("Response body from server: "); Serial.println(response);
 
